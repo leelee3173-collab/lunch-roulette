@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>오늘의 점메추 룰렛</title>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
+    <style>
+        body { background: #1a1a1a; color: #fff; font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; overflow-x: hidden; }
+        
+        /* 메인 레이아웃 */
+        .roulette-container { position: relative; width: 320px; height: 320px; margin-bottom: 20px; }
+        canvas#roulette-canvas { width: 100%; height: 100%; border: 8px solid #333; border-radius: 50%; box-shadow: 0 0 30px rgba(0,0,0,0.8); }
+        .arrow { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 20px solid transparent; border-right: 20px solid transparent; border-top: 40px solid #FF0D72; z-index: 10; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.5)); }
+
+        /* 당첨 팝업 창 (점메추 버전) */
+        #result-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 100; color: #1a1a1a; animation: fadeIn 0.5s; }
+        #winner-label { font-size: 24px; color: #666; font-weight: bold; margin-bottom: 10px; }
+        #winner-text { font-size: 60px; font-weight: 900; margin: 10px; text-align: center; color: #FF0D72; word-break: keep-all; }
+        .close-btn { margin-top: 30px; padding: 15px 50px; background: #1a1a1a; color: white; border: none; border-radius: 50px; font-size: 18px; cursor: pointer; font-weight: bold; }
+
+        /* 버튼 및 기타 UI */
+        .btn { padding: 15px 60px; font-size: 24px; border: none; border-radius: 50px; color: white; cursor: pointer; font-weight: bold; background: #FF0D72; box-shadow: 0 5px 20px rgba(255,13,114,0.4); margin-bottom: 30px; }
+        .btn:disabled { background: #555; cursor: wait; }
+        .menu-manager { width: 320px; background: rgba(255,255,255,0.05); padding: 20px; border-radius: 15px; }
+        .menu-input-group { display: flex; gap: 5px; margin-bottom: 15px; }
+        input { flex: 1; padding: 12px; border-radius: 8px; border: none; background: #333; color: white; outline: none; }
+        #add-btn { background: #0DFF72; color: #1a1a1a; border: none; border-radius: 8px; padding: 0 20px; cursor: pointer; font-weight: bold; }
+        #menu-list { padding: 0; list-style: none; }
+        li { display: flex; justify-content: space-between; padding: 10px; background: rgba(255,255,255,0.08); border-radius: 8px; margin-bottom: 6px; font-size: 14px; }
+        .delete-btn { color: #FF4444; background: none; border: none; cursor: pointer; font-weight: bold; font-size: 18px; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+    </style>
+</head>
+<body>
+
+    <h1 style="color: #0DC2FF; letter-spacing: 2px; margin-bottom: 10px;">LUNCH ROULETTE</h1>
+    <p style="color: #888; margin-top: 0; margin-bottom: 25px;">오늘 점심은 이걸루!</p>
+    
+    <div class="roulette-container">
+        <div class="arrow"></div>
+        <canvas id="roulette-canvas" width="600" height="600"></canvas>
+    </div>
+
+    <button id="spin-btn" class="btn">돌려돌려!</button>
+
+    <div class="menu-manager">
+        <div class="menu-input-group">
+            <input type="text" id="menu-input" placeholder="메뉴를 입력하세요">
+            <button id="add-btn">추가</button>
+        </div>
+        <ul id="menu-list"></ul>
+    </div>
+
+    <div id="result-overlay">
+        <div id="winner-label">✨ 오늘의 점메추 ✨</div>
+        <div id="winner-text"></div>
+        <button class="close-btn" onclick="closePopup()">확인</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('roulette-canvas');
+        const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('result-overlay');
+        const winnerText = document.getElementById('winner-text');
+        const spinBtn = document.getElementById('spin-btn');
+        const menuInput = document.getElementById('menu-input');
+        const menuListHTML = document.getElementById('menu-list');
+
+        let menus = ['김치찌개', '돈까스', '초밥', '마라탕', '치킨', '샐러드', '중화요리'];
+        const colors = ['#FF0D72', '#0DC2FF', '#0DFF72', '#F538FF', '#FF8E0D', '#FFE138', '#3877FF'];
+
+        // --- 효과음 설정 ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playTick() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.05);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.05);
+        }
+
+        function playWin() {
+            [523.25, 659.25, 783.99, 1046.50].forEach((f, i) => {
+                const o = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                o.connect(g); g.connect(audioCtx.destination);
+                o.frequency.setValueAtTime(f, audioCtx.currentTime + i * 0.1);
+                g.gain.setValueAtTime(0.1, audioCtx.currentTime + i * 0.1);
+                g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + i * 0.1 + 0.4);
+                o.start(audioCtx.currentTime + i * 0.1); o.stop(audioCtx.currentTime + i * 0.1 + 0.4);
+            });
+        }
+
+        // --- 룰렛 로직 ---
+        function draw() {
+            const arc = (2 * Math.PI) / menus.length;
+            ctx.clearRect(0, 0, 600, 600);
+            menus.forEach((menu, i) => {
+                ctx.fillStyle = colors[i % colors.length];
+                ctx.beginPath(); ctx.moveTo(300, 300);
+                ctx.arc(300, 300, 280, i * arc, (i + 1) * arc); ctx.fill();
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.save(); ctx.translate(300, 300); ctx.rotate(i * arc + arc/2);
+                ctx.textAlign = 'right'; ctx.fillStyle = '#fff'; ctx.font = 'bold 24px sans-serif';
+                ctx.fillText(menu, 250, 10); ctx.restore();
+            });
+        }
+
+        let isSpinning = false, rotation = 0, speed = 0;
+        function animate() {
+            if (!isSpinning) return;
+            const oldIdx = Math.floor((rotation % (Math.PI * 2)) / ((Math.PI * 2) / menus.length));
+            speed *= 0.985; rotation += speed;
+            canvas.style.transform = `rotate(${rotation}rad)`;
+            const newIdx = Math.floor((rotation % (Math.PI * 2)) / ((Math.PI * 2) / menus.length));
+            if (oldIdx !== newIdx) playTick();
+
+            if (speed < 0.002) {
+                isSpinning = false;
+                setTimeout(finish, 500);
+            } else requestAnimationFrame(animate);
+        }
+
+        function finish() {
+            const arc = (2 * Math.PI) / menus.length;
+            const angle = (rotation % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+            const idx = (menus.length - Math.floor(angle / arc)) % menus.length;
+            
+            winnerText.innerText = menus[idx];
+            overlay.style.display = 'flex';
+            playWin();
+            confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
+        }
+
+        function closePopup() { overlay.style.display = 'none'; spinBtn.disabled = false; }
+
+        spinBtn.onclick = () => {
+            if (menus.length < 2) return alert("메뉴를 최소 2개 입력해주세요!");
+            isSpinning = true; spinBtn.disabled = true;
+            speed = Math.random() * 0.4 + 0.4;
+            animate();
+        };
+
+        document.getElementById('add-btn').onclick = () => {
+            if (menuInput.value) { menus.push(menuInput.value); menuInput.value = ''; update(); draw(); }
+        };
+
+        function update() {
+            menuListHTML.innerHTML = menus.map((m, i) => 
+                `<li>${m} <button class="delete-btn" onclick="menus.splice(${i},1); update(); draw();">&times;</button></li>`
+            ).join('');
+        }
+
+        update(); draw();
+    </script>
+</body>
+</html>
